@@ -4,6 +4,7 @@ from matplotlib import gridspec
 from dataclasses import dataclass
 from pathlib import Path
 import matplotlib
+import csv
 
 import argparse
 
@@ -19,7 +20,13 @@ class Region:
         """
         Takes a string of the form "chr:start-end"
         """
-        contig, region = region_str.split(':')
+        split = region_str.split(':')
+        if len(split) > 1:
+            contig, region = split
+        else:
+            region = split[0]
+            contig = None
+
         start, end = region.split('-')
 
         return Region(
@@ -31,12 +38,15 @@ class Region:
 
 def get_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('region', help='The genomic region to plot, in the format chr:start-end', type=Region.parse)
-    parser.add_argument('gff', help='Path to a GFF file from which to read the gene annotations', type=Path)
+    parser.add_argument('--region', help='The genomic region to plot, in the format chr:start-end', type=Region.parse,
+                        required=True)
+    parser.add_argument('--gff', help='Path to a GFF file from which to read the gene annotations', type=Path,
+                        required=True)
+    parser.add_argument('--options', help='CSV with id,label,color data', type=Path, required=True)
     return parser
 
 
-def main(gff: Path, region: Region):
+def main(gff: Path, region: Region, options: dict):
     # import gffutils
     # db = gffutils.create_db(str(gff), dbfn='test.db', force=True, keep_order=True, merge_strategy='merge',
     #                         sort_attribute_values=True)
@@ -46,16 +56,24 @@ def main(gff: Path, region: Region):
     # Load the design from a GFF file
     design = dpl.load_design_from_gff(str(gff), region.contig, region=[region.start - 1, region.end])
     for i, gene in enumerate(design):
-        gene['opts']['label'] = gene['name']#gene['opts'].get('old_locus_tag')#
-        if i % 2 == 0:
-            gene['opts']['label_y_offset'] = -5
-        else:
-            gene['opts']['label_y_offset'] = 5
-        gene['opts']['label_size'] = 4
-        gene['opts']['color'] = matplotlib.colors.rgb2hex(cmap(i % cmap.N))
+        gene_opts = options.get(gene['opts']['locus_tag'].lower())
+        if gene_opts:
+            gene['opts']['label'] = gene_opts.label
+            gene['opts']['color'] = gene_opts.color
+            gene['opts']['label_size'] = 2
+            # if gene['end'] - gene['start'] <= 200:
+            #
+            #     gene['opts']['arrowhead_length'] = 50
+                # gene['opts']['scale'] = 2
+        # if i % 2 == 0:
+        #     gene['opts']['label_y_offset'] = -5
+        # else:
+        #     gene['opts']['label_y_offset'] = 5
+        # gene['opts']['label_size'] = 4
+        # gene['opts']['color'] = matplotlib.colors.rgb2hex(cmap(i % cmap.N))
 
     # Create the DNAplotlib renderer
-    dr = dpl.DNARenderer(scale=8, linewidth=0.8)
+    dr = dpl.DNARenderer(scale=4, linewidth=0.8)
     # part_renderers = dr.SBOL_part_renderers()
     part_renderers = dr.trace_part_renderers()
 
@@ -87,9 +105,29 @@ def main(gff: Path, region: Region):
     plt.close('all')
 
 
+@dataclass
+class Options:
+    color: str
+    label: str
+
+
+def generate_options_dict(options_file: Path):
+    options = {}
+    with options_file.open() as fp:
+        reader = csv.reader(fp)
+        for line in reader:
+            options[line[0]] = Options(
+                label=line[1],
+                color=line[2]
+            )
+    return options
+
+
 if __name__ == '__main__':
     args = get_parser().parse_args()
+    options = generate_options_dict(args.options)
     main(
         gff=args.gff,
-        region=args.region
+        region=args.region,
+        options=options
     )
